@@ -152,4 +152,70 @@ int main(int argc, char *argv[]){
 
 
 
-## 
+## xargs
+
+做这个实验对管道有更深入的理解了……
+
+首先buffer中的字符串中的管道符`|`是不需要我们手动管理的
+
+一条指令`echo hello | xargs ehco hi bye`执行的流程应该是
+
+- `shell`依据管道符将指令分为左右两个部分
+- 左侧创建一个子进程执行，右侧创建一个子进程执行
+- **把左侧的执行结果重定向到右侧进程的输入端中**
+
+因此我们实际要手动处理的输入是xargs指令的相关参数
+
+```c
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+
+
+// Q1:如何获取到前一个命令的标准化输出
+// Q2:如何获取到自己的命令行参数(将前一个命令的输出和管道符后面自己的输入结合起来)
+// Q3:如何使用exec执行这个命令
+int main(int argc, char *argv[]){
+    sleep(10);
+    // 新建个缓冲区读入数据
+    char buf[16];
+    read(0,buf,16);
+
+    // xargs执行的命令参数和刚开始的argv[]并不是完全一致
+    char *xargv[16];
+    int xargc = 0; 
+    
+    // argv[0]对应的是原始的命令名称
+    // 例如: echo hello | xargs echo hi bye 的第一个echo
+    for(int i = 1; i < argc; ++i){
+        xargv[xargc] = argv[i];
+        xargc++;
+    }
+
+    char *p = buf; // 新建一个指针对其起始位置
+    // 对整个缓冲区进行扫描
+    for(int i = 0;i < 16; ++i){
+        if(buf[i] == '\n'){
+            int pid = fork();
+            if(pid > 0){  // 父进程负责扫描输入字符串，继续扫描下去
+                p = &buf[i + 1];
+                wait(0);
+            }else{ // 子进程需要执行前一行的命令
+                buf[i] = '\0';
+                xargv[xargc] = p;
+                xargc++;
+                xargv[xargc] = '\0';
+                xargc++;
+				
+                //  xargv[0]是xargs需要执行的指令的名称 永远保持不变
+                exec(xargv[0],xargv);
+                exit(0);
+            }
+        }
+    }
+    wait(0);
+    exit(0);
+}
+```
+
